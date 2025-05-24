@@ -117,54 +117,71 @@ def load_data(conn):
     return df
 
 
-def update_data(conn, df, changes):
-    """Updates the inventory data in the database."""
+import sqlite3
+from pathlib import Path
+from collections import defaultdict
+import streamlit as st
+
+def connect_db():
+    """Safely connects to the SQLite database."""
+    DB_FILENAME = Path(__file__).parent / "inventory.db"
+    return sqlite3.connect(DB_FILENAME)
+
+def update_data(df, changes):
+    """Safely updates inventory data in the database within Streamlit."""
+    conn = connect_db()
     cursor = conn.cursor()
 
-    if changes["edited_rows"]:
-        deltas = st.session_state.inventory_table["edited_rows"]
-        rows = []
+    try:
+        # Handle edited rows
+        if changes.get("edited_rows"):
+            deltas = st.session_state.inventory_table.get("edited_rows", {})
+            rows = []
 
-        for i, delta in deltas.items():
-            row_dict = df.iloc[i].to_dict()
-            row_dict.update(delta)
-            rows.append(row_dict)
+            for i, delta in deltas.items():
+                row_dict = df.iloc[i].to_dict()
+                row_dict.update(delta)
+                rows.append(row_dict)
 
-        cursor.executemany(
-            """
-            UPDATE inventory
-            SET
-                item_name = :item_name,
-                price = :price,
-                units_sold = :units_sold,
-                units_left = :units_left,
-                cost_price = :cost_price,
-                reorder_point = :reorder_point,
-                description = :description
-            WHERE id = :id
-            """,
-            rows,
-        )
+            cursor.executemany(
+                """
+                UPDATE inventory
+                SET
+                    item_name = :item_name,
+                    price = :price,
+                    units_sold = :units_sold,
+                    units_left = :units_left,
+                    cost_price = :cost_price,
+                    reorder_point = :reorder_point,
+                    description = :description
+                WHERE id = :id
+                """,
+                rows,
+            )
 
-    if changes["added_rows"]:
-        cursor.executemany(
-            """
-            INSERT INTO inventory
-                (id, item_name, price, units_sold, units_left, cost_price, reorder_point, description)
-            VALUES
-                (:id, :item_name, :price, :units_sold, :units_left, :cost_price, :reorder_point, :description)
-            """,
-            (defaultdict(lambda: None, row) for row in changes["added_rows"]),
-        )
+        # Handle added rows
+        if changes.get("added_rows"):
+            cursor.executemany(
+                """
+                INSERT INTO inventory
+                    (id, item_name, price, units_sold, units_left, cost_price, reorder_point, description)
+                VALUES
+                    (:id, :item_name, :price, :units_sold, :units_left, :cost_price, :reorder_point, :description)
+                """,
+                (defaultdict(lambda: None, row) for row in changes["added_rows"]),
+            )
 
-    if changes["deleted_rows"]:
-        cursor.executemany(
-            "DELETE FROM inventory WHERE id = :id",
-            ({"id": int(df.loc[i, "id"])} for i in changes["deleted_rows"]),
-        )
+        # Handle deleted rows
+        if changes.get("deleted_rows"):
+            cursor.executemany(
+                "DELETE FROM inventory WHERE id = :id",
+                ({"id": int(df.loc[i, "id"])} for i in changes["deleted_rows"]),
+            )
 
-    conn.commit()
+        conn.commit()
 
+    finally:
+        conn.close()
 
 # -----------------------------------------------------------------------------
 # Draw the actual page, starting with the inventory table.
